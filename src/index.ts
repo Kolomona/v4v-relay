@@ -3,7 +3,6 @@
 import { loadConfig } from './config';
 import { createLogger } from './logger';
 import { MessageStateManager } from './messageState';
-import { SplitKitClient } from './splitkit';
 import { IRCBot } from './ircBot';
 import { BoostBotWebServer } from './webserver';
 
@@ -19,17 +18,8 @@ async function main(): Promise<void> {
     const messageState = new MessageStateManager(logger);
     await messageState.loadMessages();
     
-    // Initialize Split Kit client
-    const splitKit = new SplitKitClient(config, logger, messageState);
-    
     // Initialize IRC bot
-    const ircBot = new IRCBot(config, logger, messageState, splitKit);
-    
-    // Set up Split Kit message callback to send to IRC
-    splitKit.setMessageCallback(async (image: string, message: string) => {
-      await ircBot.sendMessageToChannels(image);
-      await ircBot.sendMessageToChannels(message);
-    });
+    const ircBot = new IRCBot(config, logger, messageState);
     
     // Initialize boost bot web server if enabled
     let webServer: BoostBotWebServer | undefined;
@@ -55,8 +45,7 @@ async function main(): Promise<void> {
       
       try {
         await messageState.saveMessages();
-        await splitKit.disconnect();
-        ircBot.disconnect();
+        await ircBot.disconnect();
         
         if (webServer) {
           await webServer.stop();

@@ -10,6 +10,8 @@ export class SplitKitClient {
   private logger: winston.Logger;
   private messageState: MessageStateManager;
   private onMessageCallback?: (image: string, message: string) => Promise<void>;
+  private activeGUID: string = '';
+  private lastTimestamp: number = 0;
 
   constructor(config: Config, logger: winston.Logger, messageState: MessageStateManager) {
     this.config = config;
@@ -73,11 +75,12 @@ export class SplitKitClient {
 
       this.logger.info(`Event received: remoteValue\nMessage: ${JSON.stringify(data)}`);
 
-      // Check timestamp to prevent spam
-      if (this.messageState.isRecentTimestamp()) {
+      // Keep timestamp checks scoped to this websocket connection.
+      const now = Math.floor(Date.now() / 1000);
+      if (now === this.lastTimestamp) {
         return;
       }
-      this.messageState.updateTimestamp();
+      this.lastTimestamp = now;
 
       // If no data, set last message to nothing
       if (!data || Object.keys(data).length === 0) {
@@ -87,9 +90,9 @@ export class SplitKitClient {
 
       // Compare GUID to prevent duplicate messages
       const guid = data.blockGuid || 'guid';
-      this.logger.info(`GUIDS: ${guid} || ${this.messageState.getActiveGUID()}`);
+      this.logger.info(`GUIDS: ${guid} || ${this.activeGUID}`);
       
-      if (guid === this.messageState.getActiveGUID()) {
+      if (guid === this.activeGUID) {
         return;
       }
 
@@ -136,7 +139,7 @@ export class SplitKitClient {
       message = message.split(/\s+/).join(' '); // Normalize whitespace
 
       // Store state for spam detection and `np` functionality
-      this.messageState.setActiveGUID(guid);
+      this.activeGUID = guid;
       this.messageState.setLastMessage(message, shortImage);
 
       // Send message via callback

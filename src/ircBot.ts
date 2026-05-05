@@ -11,24 +11,23 @@ export class IRCBot {
   private config: Config;
   private logger: winston.Logger;
   private messageState: MessageStateManager;
-  private splitKit: SplitKitClient;
   private channels: string[];
   private admins: string[];
-  private currentUrl: string = '';
   private isConnected: boolean = false;
   private messageQueue: string[] = [];
   private joinedChannels: Set<string> = new Set();
+  private splitKitConnections: Map<string, SplitKitClient> = new Map();
+  private urlSubscribers: Map<string, Set<string>> = new Map();
+  private roomSubscriptions: Map<string, Set<string>> = new Map();
 
   constructor(
     config: Config, 
     logger: winston.Logger, 
-    messageState: MessageStateManager,
-    splitKit: SplitKitClient
+    messageState: MessageStateManager
   ) {
     this.config = config;
     this.logger = logger;
     this.messageState = messageState;
-    this.splitKit = splitKit;
     this.channels = parseChannels(config.CHANNELS);
     this.admins = parseAdmins(config.ADMINS);
 
@@ -77,9 +76,15 @@ export class IRCBot {
       this.logger.debug(`IRC user object available: ${!!this.client.user}`);
       await this.processQueuedMessages();
 
-      // Connect to Split Kit if URL is provided
+      // Subscribe all joined channels to default URL if provided.
       if (this.config.URL) {
-        await this.connectToSplitKit(this.config.URL);
+        for (const channel of this.joinedChannels) {
+          try {
+            await this.subscribeRoomToUrl(channel, this.config.URL);
+          } catch (error) {
+            this.logger.error(`Failed to subscribe ${channel} to default URL:`, error);
+          }
+        }
       } else {
         // Reset messages if no URL
         await this.messageState.resetAndSave();
@@ -131,7 +136,7 @@ export class IRCBot {
         await this.handlePart(sender, target);
       } else if (command.startsWith(`${prefixLower}linkme`)) {
         await this.handleLinkme(target);
-      } else if (command.startsWith(`${prefixLower}connect `)) {
+      } else if (command === `${prefixLower}connect` || command.startsWith(`${prefixLower}connect `)) {
         if (!isAdmin) return;
         await this.handleConnect(target, message);
       } else if (command.startsWith(`${prefixLower}quit`)) {
@@ -140,6 +145,9 @@ export class IRCBot {
       } else if (command.startsWith(`${prefixLower}disconnect`)) {
         if (!isAdmin) return;
         await this.handleDisconnect(target);
+      } else if (command.startsWith(`${prefixLower}subscriptions`)) {
+        if (!isAdmin) return;
+        await this.handleSubscriptions(target);
       } else if (command.startsWith(`${prefixLower}reload`)) {
         if (!isAdmin) return;
         await this.handleReload(target);
@@ -164,6 +172,10 @@ export class IRCBot {
       
       // Leave all channels except testing; snapshot before clearing set
       const currentChannels = Array.from(this.joinedChannels);
+
+      for (const channel of currentChannels) {
+        await this.unsubscribeRoomFromAllUrls(channel);
+      }
       
       // Reset channels tracking (will re-add #skr below)
       this.channels = [];
@@ -207,6 +219,8 @@ export class IRCBot {
 
   private async handlePart(sender: string, target: string): Promise<void> {
     try {
+      await this.unsubscribeRoomFromAllUrls(target);
+
       const channelIndex = this.channels.indexOf(target);
       if (channelIndex > -1) {
         this.channels.splice(channelIndex, 1);
@@ -223,11 +237,19 @@ export class IRCBot {
   }
 
   private async handleLinkme(target: string): Promise<void> {
-    if (this.currentUrl) {
-      const uuid = this.currentUrl.split('=')[1];
-      this.client.say(target, `Follow along at: https://thesplitkit.com/live/${uuid}`);
-    } else {
+    const urls = this.roomSubscriptions.get(target);
+    const currentRoomUrl = urls?.values().next().value;
+
+    if (!currentRoomUrl) {
       this.client.say(target, "I'm not connected to an event.");
+      return;
+    }
+
+    const followUrl = this.buildFollowUrl(currentRoomUrl);
+    if (followUrl) {
+      this.client.say(target, `Follow along at: ${followUrl}`);
+    } else {
+      this.client.say(target, "I'm connected, but couldn't build a follow link for this URL.");
     }
   }
 
@@ -244,31 +266,23 @@ export class IRCBot {
         return;
       }
 
-      await this.connectToSplitKit(url);
-      
-      const uuid = url.includes('splitkit') 
-        ? url.split('live/')[1]?.replace('/', '')
-        : url.split('=')[1];
-        
-      const followUrl = `https://thesplitkit.com/live/${uuid}`;
-      this.client.say(target, `Connected! Follow along at: ${followUrl}`);
+      const subscriptionResult = await this.subscribeRoomToUrl(target, url);
+      const followUrl = this.buildFollowUrl(subscriptionResult.processedUrl);
+
+      if (subscriptionResult.alreadySubscribed) {
+        this.client.say(target, 'Already subscribed in this room.');
+        return;
+      }
+
+      if (subscriptionResult.createdConnection) {
+        this.client.say(target, followUrl ? `Connected! Follow along at: ${followUrl}` : 'Connected!');
+      } else {
+        this.client.say(target, followUrl ? `Subscribed to existing connection. Follow along at: ${followUrl}` : 'Subscribed to existing connection.');
+      }
     } catch (error) {
       this.logger.error('Connect error:', error);
       this.client.say(target, "I couldn't connect");
     }
-  }
-
-  private async connectToSplitKit(url: string): Promise<void> {
-    let processedUrl = url;
-    
-    if (url.includes('splitkit')) {
-      const uuid = url.split('live/')[1]?.replace('/', '');
-      processedUrl = `https://curiohoster.com/event?event_id=${uuid}`;
-    }
-
-    await this.messageState.resetAndSave();
-    await this.splitKit.connect(processedUrl);
-    this.currentUrl = processedUrl;
   }
 
   private async handleQuit(message: string): Promise<void> {
@@ -279,18 +293,47 @@ export class IRCBot {
     }
 
     const quitMessage = message.split(' ').slice(1).join(' ').trim() || 'Goodbye!';
-    await this.splitKit.disconnect();
+    await this.disconnectAllSplitKitConnections();
     this.client.quit(quitMessage);
   }
 
   private async handleDisconnect(target: string): Promise<void> {
-    await this.splitKit.disconnect();
-    this.client.say(target, 'Disconnected');
+    const roomUrls = this.roomSubscriptions.get(target);
+    if (!roomUrls || roomUrls.size === 0) {
+      this.client.say(target, 'This room is not subscribed to any events.');
+      return;
+    }
+
+    const urls = Array.from(roomUrls);
+    for (const url of urls) {
+      await this.unsubscribeRoomFromUrl(target, url);
+    }
+
+    this.client.say(target, 'Disconnected this room from all subscribed events.');
   }
 
   private async handleReload(target: string): Promise<void> {
     reloadKarmaMessages();
     this.client.say(target, 'OK');
+  }
+
+  private async handleSubscriptions(target: string): Promise<void> {
+    if (this.splitKitConnections.size === 0) {
+      this.client.say(target, 'No active websocket connections.');
+      return;
+    }
+
+    const roomUrls = this.roomSubscriptions.get(target);
+    if (!roomUrls || roomUrls.size === 0) {
+      this.client.say(target, 'This room is not subscribed to any events.');
+    } else {
+      this.client.say(target, `This room subscriptions: ${Array.from(roomUrls).join(' | ')}`);
+    }
+
+    this.client.say(target, `Active websocket connections: ${this.splitKitConnections.size}`);
+    for (const [url, subscribers] of this.urlSubscribers.entries()) {
+      this.client.say(target, `${url} <= ${Array.from(subscribers).join(', ')}`);
+    }
   }
 
   private async handleNowPlaying(target: string): Promise<void> {
@@ -310,7 +353,7 @@ export class IRCBot {
 
   private async handleHelp(target: string): Promise<void> {
     const p = this.config.COMMAND_PREFIX || '`';
-    this.client.say(target, `Commands: \x02${p}help\x02 (show commands), \x02${p}linkme\x02 (event link), \x02${p}np\x02 (now playing), \x02${p}ping\x02 (test response) | Admin: \x02${p}connect\x02 (join event), \x02${p}disconnect\x02 (leave event), \x02${p}join\x02 (join channel), \x02${p}part\x02 (leave channel), \x02${p}reset\x02 (reset bot), \x02${p}reload\x02 (reload config), \x02${p}quit\x02 (shutdown bot)`);
+    this.client.say(target, `Commands: \x02${p}help\x02 (show commands), \x02${p}linkme\x02 (event link), \x02${p}np\x02 (now playing), \x02${p}ping\x02 (test response) | Admin: \x02${p}connect\x02 (join event), \x02${p}disconnect\x02 (leave event), \x02${p}subscriptions\x02 (show room/url subscriptions), \x02${p}join\x02 (join channel), \x02${p}part\x02 (leave channel), \x02${p}reset\x02 (reset bot), \x02${p}reload\x02 (reload config), \x02${p}quit\x02 (shutdown bot)`);
   }
 
   async sendMessageToChannels(message: string): Promise<void> {
@@ -350,6 +393,160 @@ export class IRCBot {
     }
   }
 
+  private async sendMessageToRooms(rooms: Iterable<string>, message: string): Promise<void> {
+    if (!this.isConnected) {
+      this.logger.debug(`Dropping room-scoped message while IRC disconnected: ${message}`);
+      return;
+    }
+
+    for (const room of rooms) {
+      if (!this.joinedChannels.has(room)) {
+        continue;
+      }
+
+      this.logger.debug(`Sending room-scoped message to ${room}: ${message}`);
+      this.client.say(room, message);
+    }
+  }
+
+  private normalizeSplitKitUrl(url: string): string {
+    const trimmedUrl = url.trim();
+    const splitkitMatch = trimmedUrl.match(/\/live\/([a-f0-9-]+)/i);
+    if (splitkitMatch?.[1]) {
+      return `https://curiohoster.com/event?event_id=${splitkitMatch[1]}`;
+    }
+
+    return trimmedUrl;
+  }
+
+  private extractEventId(url: string): string | undefined {
+    const eventIdMatch = url.match(/[?&]event_id=([a-f0-9-]+)/i);
+    if (eventIdMatch?.[1]) {
+      return eventIdMatch[1];
+    }
+
+    const liveMatch = url.match(/\/live\/([a-f0-9-]+)/i);
+    return liveMatch?.[1];
+  }
+
+  private buildFollowUrl(url: string): string | undefined {
+    const eventId = this.extractEventId(url);
+    if (!eventId) {
+      return undefined;
+    }
+
+    return `https://thesplitkit.com/live/${eventId}`;
+  }
+
+  private async subscribeRoomToUrl(room: string, rawUrl: string): Promise<{ processedUrl: string; createdConnection: boolean; alreadySubscribed: boolean }> {
+    const processedUrl = this.normalizeSplitKitUrl(rawUrl);
+
+    let roomUrls = this.roomSubscriptions.get(room);
+    if (!roomUrls) {
+      roomUrls = new Set<string>();
+      this.roomSubscriptions.set(room, roomUrls);
+    }
+
+    if (roomUrls.has(processedUrl)) {
+      return { processedUrl, createdConnection: false, alreadySubscribed: true };
+    }
+
+    roomUrls.add(processedUrl);
+
+    let subscribers = this.urlSubscribers.get(processedUrl);
+    if (!subscribers) {
+      subscribers = new Set<string>();
+      this.urlSubscribers.set(processedUrl, subscribers);
+    }
+    subscribers.add(room);
+
+    const existingConnection = this.splitKitConnections.get(processedUrl);
+    if (existingConnection) {
+      return { processedUrl, createdConnection: false, alreadySubscribed: false };
+    }
+
+    const splitKitClient = new SplitKitClient(this.config, this.logger, this.messageState);
+    splitKitClient.setMessageCallback(async (image: string, message: string) => {
+      const currentSubscribers = this.urlSubscribers.get(processedUrl);
+      if (!currentSubscribers || currentSubscribers.size === 0) {
+        return;
+      }
+
+      await this.sendMessageToRooms(currentSubscribers, image);
+      await this.sendMessageToRooms(currentSubscribers, message);
+    });
+
+    try {
+      await splitKitClient.connect(processedUrl);
+      this.splitKitConnections.set(processedUrl, splitKitClient);
+      return { processedUrl, createdConnection: true, alreadySubscribed: false };
+    } catch (error) {
+      subscribers.delete(room);
+      if (subscribers.size === 0) {
+        this.urlSubscribers.delete(processedUrl);
+      }
+
+      roomUrls.delete(processedUrl);
+      if (roomUrls.size === 0) {
+        this.roomSubscriptions.delete(room);
+      }
+
+      throw error;
+    }
+  }
+
+  private async unsubscribeRoomFromUrl(room: string, url: string): Promise<void> {
+    const roomUrls = this.roomSubscriptions.get(room);
+    if (roomUrls) {
+      roomUrls.delete(url);
+      if (roomUrls.size === 0) {
+        this.roomSubscriptions.delete(room);
+      }
+    }
+
+    const subscribers = this.urlSubscribers.get(url);
+    if (!subscribers) {
+      return;
+    }
+
+    subscribers.delete(room);
+    if (subscribers.size > 0) {
+      return;
+    }
+
+    this.urlSubscribers.delete(url);
+    const client = this.splitKitConnections.get(url);
+    if (client) {
+      await client.disconnect();
+      this.splitKitConnections.delete(url);
+    }
+  }
+
+  private async unsubscribeRoomFromAllUrls(room: string): Promise<void> {
+    const urls = this.roomSubscriptions.get(room);
+    if (!urls || urls.size === 0) {
+      return;
+    }
+
+    for (const url of Array.from(urls)) {
+      await this.unsubscribeRoomFromUrl(room, url);
+    }
+  }
+
+  private async disconnectAllSplitKitConnections(): Promise<void> {
+    for (const [url, client] of this.splitKitConnections.entries()) {
+      try {
+        await client.disconnect();
+      } catch (error) {
+        this.logger.error(`Error disconnecting Split Kit client for ${url}:`, error);
+      }
+    }
+
+    this.splitKitConnections.clear();
+    this.urlSubscribers.clear();
+    this.roomSubscriptions.clear();
+  }
+
   private async processQueuedMessages(): Promise<void> {
     if (this.messageQueue.length === 0) return;
     
@@ -378,7 +575,8 @@ export class IRCBot {
     });
   }
 
-  disconnect(): void {
+  async disconnect(): Promise<void> {
+    await this.disconnectAllSplitKitConnections();
     this.client.quit('Bot shutting down');
   }
 }
