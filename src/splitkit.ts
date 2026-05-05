@@ -182,9 +182,20 @@ export class SplitKitClient {
       }
     } catch (error) {
       if (axios.isAxiosError(error)) {
-        this.logger.warn(`YOURLS API error (${error.response?.status}): ${error.message}, using original URL`);
+        const responseShortUrl = error.response?.data && typeof error.response.data === 'object' && 'shorturl' in error.response.data
+          ? String(error.response.data.shorturl)
+          : '';
+
+        if (responseShortUrl) {
+          this.logger.debug(`YOURLS returned existing short URL for ${url}: ${responseShortUrl}`);
+          return responseShortUrl;
+        }
+
+        const status = error.response?.status ?? 'no-status';
+        const responseData = error.response?.data ? JSON.stringify(error.response.data) : 'no response body';
+        this.logger.warn(`YOURLS API error for URL ${url} (${status}): ${error.message}; response=${responseData}, using original URL`);
       } else {
-        this.logger.warn(`Error shortening URL: ${error instanceof Error ? error.message : 'Unknown error'}, using original URL`);
+        this.logger.warn(`Error shortening URL ${url}: ${error instanceof Error ? error.message : 'Unknown error'}, using original URL`);
       }
       return url;
     }
