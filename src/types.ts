@@ -8,6 +8,7 @@ export interface Config {
   REALNAME: string;
   NICK: string;
   CHANNELS: string;
+  COMMAND_PREFIX: string;
 
   // Webserver Settings
   WEBPORT: string;

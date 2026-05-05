@@ -22,6 +22,7 @@ export function loadConfig(): Config {
     REALNAME: process.env.REALNAME!,
     NICK: process.env.NICK!,
     CHANNELS: process.env.CHANNELS!,
+    COMMAND_PREFIX: process.env.COMMAND_PREFIX || '`',
     WEBPORT: process.env.WEBPORT!,
     AUTHTOKEN: process.env.AUTHTOKEN!,
     YOURLSAPIURL: process.env.YOURLSAPIURL || '',

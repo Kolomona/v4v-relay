@@ -103,43 +103,47 @@ export class IRCBot {
     const { nick, target, message } = event;
     
     // Handle IRC commands
-    if (message.startsWith('`')) {
+    if (message.startsWith(this.config.COMMAND_PREFIX)) {
       await this.handleCommand(nick, target, message);
     }
   }
 
   private async handleCommand(sender: string, target: string, message: string): Promise<void> {
     const isAdmin = this.admins.includes(sender);
+    const prefix = this.config.COMMAND_PREFIX || '`';
     const command = message.toLowerCase();
+    const prefixLower = prefix.toLowerCase();
 
     try {
-      if (command.startsWith('`reset')) {
+      if (command.startsWith(`${prefixLower}reset`)) {
         if (!isAdmin) return;
         await this.handleReset(target);
-      } else if (command.startsWith('`join ')) {
+      } else if (command.startsWith(`${prefixLower}join `)) {
         if (!isAdmin) return;
         await this.handleJoin(sender, message);
-      } else if (command.startsWith('`part')) {
+      } else if (command.startsWith(`${prefixLower}part`)) {
         if (!isAdmin) return;
         await this.handlePart(sender, target);
-      } else if (command.startsWith('`linkme')) {
+      } else if (command.startsWith(`${prefixLower}linkme`)) {
         await this.handleLinkme(target);
-      } else if (command.startsWith('`connect ')) {
+      } else if (command.startsWith(`${prefixLower}connect `)) {
         if (!isAdmin) return;
         await this.handleConnect(target, message);
-      } else if (command.startsWith('`quit')) {
+      } else if (command.startsWith(`${prefixLower}quit`)) {
         if (!isAdmin) return;
         await this.handleQuit(message);
-      } else if (command.startsWith('`disconnect')) {
+      } else if (command.startsWith(`${prefixLower}disconnect`)) {
         if (!isAdmin) return;
         await this.handleDisconnect(target);
-      } else if (command.startsWith('`reload')) {
+      } else if (command.startsWith(`${prefixLower}reload`)) {
         if (!isAdmin) return;
         await this.handleReload(target);
-      } else if (command.startsWith('`np')) {
+      } else if (command.startsWith(`${prefixLower}np`)) {
         await this.handleNowPlaying(target);
-      } else if (command.startsWith('`ping')) {
+      } else if (command.startsWith(`${prefixLower}ping`)) {
         await this.handlePing(target, message);
+      } else if (command.startsWith(`${prefixLower}help`)) {
+        await this.handleHelp(target);
       }
     } catch (error) {
       this.logger.error('Error handling command:', error);
@@ -153,16 +157,16 @@ export class IRCBot {
     try {
       await this.messageState.resetAndSave();
       
-      // Reset channels
+      // Leave all channels except testing; snapshot before clearing set
+      const currentChannels = Array.from(this.joinedChannels);
+      
+      // Reset channels tracking (will re-add #skr below)
       this.channels = [];
       this.joinedChannels.clear();
-      
-      // Leave all channels except testing
-      const currentChannels = Array.from(this.joinedChannels);
+
       for (const channel of currentChannels) {
         if (channel !== '#skr') {
           this.client.part(channel);
-          this.joinedChannels.delete(channel);
         }
       }
       
@@ -295,8 +299,14 @@ export class IRCBot {
   }
 
   private async handlePing(target: string, message: string): Promise<void> {
-    const suffix = message.slice(5); // Remove '`ping'
+    const cmdLen = (this.config.COMMAND_PREFIX || '`').length + 'ping'.length;
+    const suffix = message.slice(cmdLen); // Remove '<prefix>ping'
     this.client.say(target, `pong${suffix}`);
+  }
+
+  private async handleHelp(target: string): Promise<void> {
+    const p = this.config.COMMAND_PREFIX || '`';
+    this.client.say(target, `Commands: \x02${p}help\x02 (show commands), \x02${p}linkme\x02 (event link), \x02${p}np\x02 (now playing), \x02${p}ping\x02 (test response) | Admin: \x02${p}connect\x02 (join event), \x02${p}disconnect\x02 (leave event), \x02${p}join\x02 (join channel), \x02${p}part\x02 (leave channel), \x02${p}reset\x02 (reset bot), \x02${p}reload\x02 (reload config), \x02${p}quit\x02 (shutdown bot)`);
   }
 
   async sendMessageToChannels(message: string): Promise<void> {
