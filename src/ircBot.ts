@@ -4,6 +4,7 @@ import { Config } from './types';
 import { parseChannels, parseAdmins } from './config';
 import { MessageStateManager } from './messageState';
 import { SplitKitClient } from './splitkit';
+import { checkKarma, reloadKarmaMessages } from './karma';
 
 export class IRCBot {
   private client: IRCClient;
@@ -101,8 +102,12 @@ export class IRCBot {
 
   private async handleMessage(event: any): Promise<void> {
     const { nick, target, message } = event;
-    
-    // Handle IRC commands
+
+    const karmaResponse = checkKarma(message);
+    if (karmaResponse) {
+      this.client.say(target, karmaResponse);
+    }
+
     if (message.startsWith(this.config.COMMAND_PREFIX)) {
       await this.handleCommand(nick, target, message);
     }
@@ -284,8 +289,7 @@ export class IRCBot {
   }
 
   private async handleReload(target: string): Promise<void> {
-    // Note: In a real implementation, you'd need to reload the config
-    // For now, just acknowledge the command
+    reloadKarmaMessages();
     this.client.say(target, 'OK');
   }
 

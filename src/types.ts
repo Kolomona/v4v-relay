@@ -78,6 +78,15 @@ export interface YourlsParams {
   format: string;
 }
 
+export interface KarmaMessages {
+  emojis: {
+    positive: string[];
+    negative: string[];
+  };
+  compliments: string[];
+  insults: string[];
+}
+
 // IRC Framework types extension
 export interface IRCMessage {
   sender: {

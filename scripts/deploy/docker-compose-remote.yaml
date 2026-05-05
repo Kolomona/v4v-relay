@@ -1,0 +1,17 @@
+services:
+  bot:
+    image: libre-relay-bot:latest
+    container_name: libre-relay-bot
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "7777:7777"
+    volumes:
+      - /home/hapa/dockers/libre-relay-bot/karmaMessages.json:/app/karmaMessages.json:ro
+    networks:
+      - proxy-network
+
+networks:
+  proxy-network:
+    external: true
+    name: proxy-network
