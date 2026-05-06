@@ -46,7 +46,8 @@ export interface BoostagramData {
   app: string;
   podcast: string;
   episode: string;
-  remote_episode: string;
+  remote_podcast?: string | null;
+  remote_episode?: string | null;
 }
 
 export interface MessageState {

@@ -1,98 +1,182 @@
 # V4V Relay
 
-TypeScript IRC bot that relays messages from The Split Kit and boostagrams from Helipad.
+V4V Relay is a TypeScript IRC bot that relays live media updates from The Split Kit and boostagram webhooks from Helipad.
 
-This is a Node.js/TypeScript conversion of the original [splitkit-relay](https://github.com/cottongin/splitkit-relay) Python project with 100% functionality preservation.
+It started as a Node.js port of the original [splitkit-relay](https://github.com/cottongin/splitkit-relay) Python project, but it now has its own room-scoped websocket subscription model, configurable command prefix, karma responses, and current Node.js tooling.
 
-## Features
+## What It Does
 
-- **IRC Bot**: Connects to IRC channels and relays live media updates from The Split Kit
-- **WebSocket Client**: Listens to Split Kit events in real-time  
-- **Boost Bot**: HTTP server that receives boostagram webhooks from Helipad
-- **URL Shortening**: Integrates with YOURLS for image URL shortening
-- **Admin Commands**: Full set of IRC commands for bot management
-- **TypeScript**: Fully typed with strict TypeScript configuration
+- Connects to one or more IRC channels using `irc-framework`
+- Listens to Split Kit websocket events and relays now-playing updates into IRC
+- Accepts Helipad boostagram webhooks over HTTP and relays them to IRC
+- Shortens image URLs with [YOURLS](https://github.com/YOURLS/YOURLS)
+- Responds to `++` and `--` karma messages with randomized compliments and insults from `karmaMessages.json`
+- Persists the last seen message in `MESSAGES.json`
 
-## Installation
+## Room-Scoped Subscriptions
 
-### Requirements
+The bot supports multiple active Split Kit events at the same time.
 
-- Node.js 18+ 
-- npm or yarn
-- [YOURLS](https://github.com/YOURLS/YOURLS) URL shortener instance
-- Access to The Split Kit event websocket
+- Each unique event URL gets at most one websocket connection
+- Each IRC room can subscribe to one or more event URLs
+- When a room connects to a URL that is already active, the bot reuses the existing websocket and just adds that room as a subscriber
+- Websocket events are relayed only to the rooms subscribed to that URL
+- `disconnect` removes only the current room from its subscriptions and closes a websocket only when no rooms remain subscribed
+- If `URL` is set in `.env`, every joined room is subscribed to that default event at startup
 
-### Setup
+## Requirements
+
+- Node.js 18+
+- npm
+- A reachable IRC server with NickServ credentials if your network requires identification
+- A Split Kit or compatible websocket event URL
+- A YOURLS instance if you want URL shortening
+- Helipad if you want boostagram webhook relaying
+
+## Setup
 
 ```bash
-# Clone and install dependencies
-git clone <repository-url>
+git clone https://github.com/Kolomona/v4v-relay.git
 cd v4v-relay
 npm install
+cp sample.env .env
+```
 
-# Copy and configure environment
-cp .env.sample .env
-# Edit .env with your settings
+Edit `.env`, then run:
 
-# Build the project
+```bash
 npm run build
-
-# Start the bot
 npm start
 ```
 
-### Development
+For development:
 
 ```bash
-# Run in development mode with hot reload
 npm run dev
-
-# Type checking
 npm run type-check
-
-# Linting
 npm run lint
-
-# Watch mode for building
 npm run watch
 ```
 
-## Configuration
+## Environment Variables
 
-Edit `.env` file with your settings:
+Use `sample.env` as the template.
 
-- **IRC Settings**: Server, credentials, channels
-- **Split Kit**: Websocket URL from thesplitkit.com
-- **YOURLS**: URL shortener API configuration  
-- **Boost Bot**: Webserver port and auth token for Helipad
-- **Admins**: IRC nicknames allowed to control the bot
+### IRC
 
-## IRC Commands
+- `NSPASS`: NickServ password
+- `HOST`: IRC server hostname
+- `PORT`: IRC server port
+- `SECURE`: set to `True` to enable TLS
+- `USER`: IRC username
+- `REALNAME`: IRC real name / gecos
+- `NICK`: bot nickname
+- `CHANNELS`: comma-separated list of channels to join
+- `COMMAND_PREFIX`: command prefix, defaults to `` ` `` if omitted
 
-| Command | Description | Admin Only? |
-|---------|-------------|-------------|
-| `` `join #channel`` | Join IRC channel | Yes |
-| `` `part`` | Leave current channel | Yes |
-| `` `connect URL`` | Connect to Split Kit websocket | Yes |
-| `` `disconnect`` | Disconnect from websocket | Yes |
-| `` `reload`` | Reload configuration | Yes |
-| `` `np`` | Show last playing message | No |
-| `` `quit`` | Shutdown bot | Yes |
-| `` `reset`` | Reset state and channels | Yes |
-| `` `linkme`` | Get Split Kit event URL | No |
-| `` `ping`` | Ping/pong test | No |
+Note: the bot always adds `#skr` to the joined channel list.
 
-## Architecture
+### Web Server
 
-- **`src/index.ts`**: Main application entry point
-- **`src/ircBot.ts`**: IRC client and command handling
-- **`src/splitkit.ts`**: WebSocket client for Split Kit events  
-- **`src/webserver.ts`**: HTTP server for boostagram webhooks
-- **`src/messageState.ts`**: Message persistence and deduplication
-- **`src/config.ts`**: Configuration management
-- **`src/logger.ts`**: Winston logging setup
-- **`src/types.ts`**: TypeScript type definitions
+- `WEBPORT`: port for the boostagram webhook server
+- `AUTHTOKEN`: bearer token expected from Helipad
+
+### YOURLS
+
+- `YOURLSAPIURL`: full YOURLS API endpoint, usually `https://your-domain/yourls-api.php`
+- `SHORTURL`: YOURLS API signature/token
+
+If YOURLS is not configured, the bot sends original image URLs instead of shortened ones.
+
+### Split Kit
+
+- `URL`: optional default event URL to subscribe joined rooms to at startup
+- `TEXTTOSTRIP`: string removed from websocket payload text before relay formatting
+
+### Bot
+
+- `ADMINS`: comma-separated IRC nicknames allowed to run admin commands
+- `LOGLEVEL`: log level such as `debug`, `info`, or `warning`
+- `ENABLEBOOSTBOT`: set to `true` to enable the Helipad webhook server
+
+## Commands
+
+Replace `~` below with your configured `COMMAND_PREFIX`.
+
+### Public Commands
+
+- `~help`: show command help
+- `~linkme`: show the follow-along URL for the current room's first subscribed event
+- `~np`: show the last stored now-playing message and image
+- `~ping`: reply with `pong`
+
+### Admin Commands
+
+- `~connect <url>`: subscribe the current room to an event URL
+- `~connect`: subscribe the current room to the default `URL` from `.env`
+- `~disconnect`: unsubscribe the current room from all of its event URLs
+- `~subscriptions`: show current room subscriptions and all active websocket connections
+- `~join <#channel>`: have the bot join another IRC channel
+- `~part`: leave the current IRC channel and remove its subscriptions
+- `~reset`: clear message state, unsubscribe all rooms, leave all joined channels except `#skr`, and rejoin `#skr`
+- `~reload`: reload karma message templates from `karmaMessages.json`
+- `~quit [message]`: save state, disconnect sockets, and quit IRC
+
+## Boostagram Webhook
+
+When `ENABLEBOOSTBOT=true`, the bot starts an Express server on `WEBPORT`.
+
+- `GET /`: simple informational page
+- `POST /`: Helipad webhook endpoint
+- Requires `Authorization: Bearer <AUTHTOKEN>`
+
+Boostagrams are formatted into IRC with the sats amount, sender, app, episode, remote episode, and quoted message.
+
+## Message Formatting
+
+Split Kit events are normalized before relay:
+
+- `value` payload fields are ignored
+- duplicate GUIDs are suppressed per websocket connection
+- image URLs may be rewritten for Wavlake / CloudFront images
+- titles are bolded for IRC
+- detail lines are joined with ` • `
+- newline and repeated whitespace are collapsed
+- if YOURLS reports that a URL already exists, the existing short URL is reused
+
+## Persistence
+
+- `MESSAGES.json` stores the last image URL, last message, active GUID, and timestamp state
+- `karmaMessages.json` stores emoji lists, compliments, and insults used by the karma responder
+
+## Project Layout
+
+- `src/index.ts`: startup, shutdown, and wiring
+- `src/ircBot.ts`: IRC connection, commands, room subscription registry, and routing
+- `src/splitkit.ts`: websocket client, event normalization, and YOURLS handling
+- `src/webserver.ts`: boostagram webhook server
+- `src/messageState.ts`: persisted message state
+- `src/karma.ts`: karma matching and random response generation
+- `src/config.ts`: `.env` loading and parsing
+- `src/logger.ts`: Winston console logger
+- `src/types.ts`: shared types
+
+## Scripts
+
+- `npm run build`: compile TypeScript to `dist/`
+- `npm start`: run compiled output
+- `npm run dev`: run directly with `ts-node`
+- `npm run watch`: TypeScript watch mode
+- `npm run clean`: remove `dist/`
+- `npm run lint`: run ESLint
+- `npm run type-check`: run TypeScript without emitting files
+
+## Notes
+
+- The repo includes a `Dockerfile`, but the primary workflow in this repo is local Node.js execution
+- The logger writes colored structured output to the console only
+- Current TypeScript and dependency tooling passes `npm audit` with no reported vulnerabilities
 
 ## License
 
-Same as original project. See parent repository for details.
+MIT

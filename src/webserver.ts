@@ -53,10 +53,17 @@ export class BoostBotWebServer {
         const sender = data.sender;
         const app = data.app;
         const episode = data.episode;
+        const remotePodcast = data.remote_podcast;
         const remoteEpisode = data.remote_episode;
 
+        // Build details array, filtering out null/undefined values
+        const details: string[] = [episode];
+        if (remotePodcast) details.push(remotePodcast);
+        if (remoteEpisode) details.push(remoteEpisode);
+        const detailsStr = details.join(' | ');
+
         // Format message with IRC color codes
-        const outputMessage = `\x02${valueSatTotal}\x02 sats from \x02${sender}\x02 via ${app} | ${episode} | ${remoteEpisode} | \x0304"${message}"\x0300`;
+        const outputMessage = `\x02${valueSatTotal}\x02 sats from \x02${sender}\x02 via ${app} | ${detailsStr} | \x0304"${message}"\x0300`;
 
         // Log the processed message
         this.logger.info(`From webserver: ${outputMessage}`);
