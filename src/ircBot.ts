@@ -5,6 +5,7 @@ import { parseChannels, parseAdmins } from './config';
 import { MessageStateManager } from './messageState';
 import { SplitKitClient } from './splitkit';
 import { checkKarma, reloadKarmaMessages } from './karma';
+import { reloadSettings } from './settings';
 
 export class IRCBot {
   private client: IRCClient;
@@ -108,7 +109,7 @@ export class IRCBot {
   private async handleMessage(event: any): Promise<void> {
     const { nick, target, message } = event;
 
-    const karmaResponse = checkKarma(message);
+    const karmaResponse = checkKarma(message, { user: nick });
     if (karmaResponse) {
       this.client.say(target, karmaResponse);
     }
@@ -314,6 +315,7 @@ export class IRCBot {
 
   private async handleReload(target: string): Promise<void> {
     reloadKarmaMessages();
+    reloadSettings();
     this.client.say(target, 'OK');
   }
 

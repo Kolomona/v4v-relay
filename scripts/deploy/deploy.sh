@@ -83,19 +83,40 @@ do_docker_save() {
 }
 step "docker save" do_docker_save
 
-# ── Step 4: ensure remote directory and karmaMessages.json ────────────────
+# ── Step 4: ensure remote data directory and seed data files ──────────────
 do_ensure_remote_files() {
-  remote "mkdir -p ${REMOTE_PATH}"
+  remote "mkdir -p ${REMOTE_PATH}/data"
   local karma_exists
-  karma_exists=$(remote "test -f ${REMOTE_PATH}/karmaMessages.json && echo yes || echo no")
+  karma_exists=$(remote "test -f ${REMOTE_PATH}/data/karmaMessages.json && echo yes || echo no")
+
+  # One-time migration from legacy path if needed.
   if [ "$karma_exists" = "no" ]; then
-    log "Uploading default karmaMessages.json"
-    scp "$PROJECT_DIR/karmaMessages.json" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/karmaMessages.json"
+    local legacy_exists
+    legacy_exists=$(remote "test -f ${REMOTE_PATH}/karmaMessages.json && echo yes || echo no")
+    if [ "$legacy_exists" = "yes" ]; then
+      log "Migrating legacy karmaMessages.json into data directory"
+      remote "cp ${REMOTE_PATH}/karmaMessages.json ${REMOTE_PATH}/data/karmaMessages.json"
+      karma_exists="yes"
+    fi
+  fi
+
+  if [ "$karma_exists" = "no" ]; then
+    log "Uploading default data/karmaMessages.json"
+    scp "$PROJECT_DIR/data/karmaMessages.json" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/data/karmaMessages.json"
   else
-    log "karmaMessages.json already exists on remote — preserving"
+    log "data/karmaMessages.json already exists on remote — preserving"
+  fi
+
+  local settings_exists
+  settings_exists=$(remote "test -f ${REMOTE_PATH}/data/settings.json && echo yes || echo no")
+  if [ "$settings_exists" = "no" ]; then
+    log "Uploading default data/settings.json"
+    scp "$PROJECT_DIR/data/settings.json" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/data/settings.json"
+  else
+    log "data/settings.json already exists on remote — preserving"
   fi
 }
-step "Ensure remote directory and karmaMessages.json" do_ensure_remote_files
+step "Ensure remote data directory and seed data files" do_ensure_remote_files
 
 # ── Step 5: upload image ──────────────────────────────────────────────────
 do_upload_image() {

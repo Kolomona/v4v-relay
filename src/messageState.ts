@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import path from 'path';
 import { MessageState } from './types';
 import winston from 'winston';
 
@@ -7,7 +8,7 @@ export class MessageStateManager {
   private messages: MessageState;
   private logger: winston.Logger;
 
-  constructor(logger: winston.Logger, messagesPath: string = 'MESSAGES.json') {
+  constructor(logger: winston.Logger, messagesPath: string = path.resolve(__dirname, '..', 'data', 'MESSAGES.json')) {
     this.messagesPath = messagesPath;
     this.logger = logger;
     this.messages = {

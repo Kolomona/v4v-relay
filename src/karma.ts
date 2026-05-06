@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { KarmaMessages } from './types';
+import { getRuntimeSettings } from './settings';
+import { ResponseContext, ResponsePolicy, responsePolicyEngine } from './responsePolicy';
 
 const KARMA_PATTERN = /\b(\S+?)(\+\+|--)(?:\s|$)/g;
 
@@ -9,7 +11,7 @@ let karmaMessages: KarmaMessages | null = null;
 function loadKarmaMessages(): KarmaMessages {
   if (karmaMessages) return karmaMessages;
 
-  const filePath = path.resolve(__dirname, '..', 'karmaMessages.json');
+  const filePath = path.resolve(__dirname, '..', 'data', 'karmaMessages.json');
   const raw = fs.readFileSync(filePath, 'utf-8');
   const parsed = JSON.parse(raw);
 
@@ -30,7 +32,25 @@ export function reloadKarmaMessages(): void {
     loadKarmaMessages();
 }
 
-export function checkKarma(message: string): string | null {
+function getKarmaResponsePolicy(): ResponsePolicy {
+  const settings = getRuntimeSettings();
+  const karmaSettings = settings.karmaResponse;
+
+  const policy: ResponsePolicy = {
+    key: 'karma',
+    chance: karmaSettings?.chance ?? 0.3,
+    cooldownMs: karmaSettings?.cooldownMs ?? 25_000,
+    perTargetCooldownMs: karmaSettings?.perTargetCooldownMs ?? 60_000
+  };
+
+  if (karmaSettings?.perUserCooldownMs !== undefined) {
+    policy.perUserCooldownMs = karmaSettings.perUserCooldownMs;
+  }
+
+  return policy;
+}
+
+export function checkKarma(message: string, context: ResponseContext = {}): string | null {
     const messages = loadKarmaMessages();
 
     const matches = [...message.matchAll(KARMA_PATTERN)];
@@ -40,6 +60,13 @@ export function checkKarma(message: string): string | null {
     if (!first || first.length < 3) return null;
     const subject = first[1]!;
     const type = first[2]!;
+
+  const policyContext: ResponseContext = { target: subject };
+  if (context.user !== undefined) policyContext.user = context.user;
+  if (context.now !== undefined) policyContext.now = context.now;
+
+  const allowed = responsePolicyEngine.shouldRespond(getKarmaResponsePolicy(), policyContext);
+  if (!allowed) return null;
 
   const isPositive = type === '++';
   const list = isPositive ? messages.compliments : messages.insults;

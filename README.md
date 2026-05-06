@@ -24,6 +24,28 @@ The bot supports multiple active Split Kit events at the same time.
 - `disconnect` removes only the current room from its subscriptions and closes a websocket only when no rooms remain subscribed
 - If `URL` is set in `.env`, every joined room is subscribed to that default event at startup
 
+## Data Files
+
+All persistent data files are stored in the `data/` directory:
+
+- `karmaMessages.json` — Emoji, compliment, and insult templates for karma responses
+- `settings.json` — Runtime configuration (chance, cooldown timers, etc.) without requiring redeploy
+- `MESSAGES.json` — Last-seen message state for each IRC room (auto-generated)
+
+In Docker, the entire `data/` directory is mounted as a volume, so data persists across container restarts and redeployments.
+
+## Runtime Configuration
+
+The `data/settings.json` file allows tuning bot behavior without code changes or redeploys.
+
+Currently supports karma response rate-limiting:
+- `chance`: Probability of responding to `++`/`--` messages (0.0–1.0)
+- `cooldownMs`: Global cooldown between responses
+- `perTargetCooldownMs`: Per-channel cooldown
+- `perUserCooldownMs`: Per-user cooldown (set to 0 to disable)
+
+See [data/settings.md](data/settings.md) for detailed documentation and tuning examples.
+
 ## Requirements
 
 - Node.js 18+

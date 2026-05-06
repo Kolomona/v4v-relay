@@ -88,6 +88,17 @@ export interface KarmaMessages {
   insults: string[];
 }
 
+export interface KarmaResponseSettings {
+  chance?: number;
+  cooldownMs?: number;
+  perTargetCooldownMs?: number;
+  perUserCooldownMs?: number;
+}
+
+export interface RuntimeSettings {
+  karmaResponse?: KarmaResponseSettings;
+}
+
 // IRC Framework types extension
 export interface IRCMessage {
   sender: {

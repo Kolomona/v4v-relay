@@ -17,7 +17,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./
 
-COPY karmaMessages.json ./karmaMessages.json
+COPY data/ ./data/
 
 EXPOSE 7777
 

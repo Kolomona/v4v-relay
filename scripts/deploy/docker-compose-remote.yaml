@@ -7,7 +7,7 @@ services:
     ports:
       - "7777:7777"
     volumes:
-      - /home/hapa/dockers/libre-relay-bot/karmaMessages.json:/app/karmaMessages.json:ro
+      - /home/hapa/dockers/libre-relay-bot/data:/app/data
     networks:
       - proxy-network
 
