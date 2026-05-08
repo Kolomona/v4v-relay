@@ -1,8 +1,8 @@
 {
   "karmaResponse": {
-    "chance": 0.2,
-    "cooldownMs": 25000,
-    "perTargetCooldownMs": 60000,
+    "chance": 0.3,
+    "cooldownMs": 20000,
+    "perTargetCooldownMs": 30000,
     "perUserCooldownMs": 0
   }
 }
