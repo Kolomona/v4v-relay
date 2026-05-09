@@ -8,6 +8,7 @@ services:
       - "7777:7777"
     volumes:
       - /home/hapa/dockers/libre-relay-bot/data:/app/data
+      - /home/hapa/dockers/libre-relay-bot/.env:/app/.env:ro
     networks:
       - proxy-network
 

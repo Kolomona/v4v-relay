@@ -1,8 +1,10 @@
 import { config } from 'dotenv';
+import path from 'path';
 import { Config } from './types';
 
 // Load environment variables
-config();
+const envPath = process.env.CONFIG_ENV_PATH || path.resolve(process.cwd(), '.env');
+config({ path: envPath, override: true });
 
 export function loadConfig(): Config {
   const requiredVars = ['NSPASS', 'HOST', 'PORT', 'USER', 'REALNAME', 'NICK', 'CHANNELS', 'WEBPORT', 'AUTHTOKEN', 'ADMINS'];
