@@ -29,7 +29,7 @@ async function main(): Promise<void> {
       // Set up boost bot callback to send to IRC
       webServer.setCallback(async (message: string) => {
         logger.info(`From webserver: ${message}`);
-        await ircBot.sendMessageToChannels(message);
+        await ircBot.sendMessageToChannels(message, 'boostagrams');
       });
       
       // Start web server

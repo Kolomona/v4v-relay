@@ -20,6 +20,7 @@ export class IRCBot {
   private splitKitConnections: Map<string, SplitKitClient> = new Map();
   private urlSubscribers: Map<string, Set<string>> = new Map();
   private roomSubscriptions: Map<string, Set<string>> = new Map();
+  private roomQuietState: Map<string, { all: boolean; quips: boolean; boostagrams: boolean }> = new Map();
 
   constructor(
     config: Config, 
@@ -111,7 +112,7 @@ export class IRCBot {
 
     const karmaResponse = checkKarma(message, { user: nick });
     if (karmaResponse) {
-      this.client.say(target, karmaResponse);
+      this.sayToRoom(target, karmaResponse, 'quips');
     }
 
     if (message.startsWith(this.config.COMMAND_PREFIX)) {
@@ -146,7 +147,7 @@ export class IRCBot {
       } else if (command.startsWith(`${prefixLower}disconnect`)) {
         if (!isAdmin) return;
         await this.handleDisconnect(target);
-      } else if (command.startsWith(`${prefixLower}subscriptions`)) {
+      } else if (command.startsWith(`${prefixLower}subs`)) {
         if (!isAdmin) return;
         await this.handleSubscriptions(target);
       } else if (command.startsWith(`${prefixLower}reload`)) {
@@ -157,7 +158,16 @@ export class IRCBot {
       } else if (command.startsWith(`${prefixLower}ping`)) {
         await this.handlePing(target, message);
       } else if (command.startsWith(`${prefixLower}help`)) {
-        await this.handleHelp(target);
+        await this.handleHelp(target, message);
+      } else if (command.startsWith(`${prefixLower}status`)) {
+        if (!isAdmin) return;
+        await this.handleStatus(target);
+      } else if (command === `${prefixLower}quiet` || command.startsWith(`${prefixLower}quiet `)) {
+        if (!isAdmin) return;
+        await this.handleQuiet(target, message);
+      } else if (command === `${prefixLower}unquiet` || command.startsWith(`${prefixLower}unquiet `)) {
+        if (!isAdmin) return;
+        await this.handleUnquiet(target, message);
       }
     } catch (error) {
       this.logger.error('Error handling command:', error);
@@ -228,7 +238,7 @@ export class IRCBot {
       }
       this.joinedChannels.delete(target);
       
-      this.client.part(target, 'adios');
+      this.client.part(target, 'adios mofos!');
       if (this.admins[0]) {
         this.client.say(this.admins[0], `Left ${target}`);
       }
@@ -242,15 +252,15 @@ export class IRCBot {
     const currentRoomUrl = urls?.values().next().value;
 
     if (!currentRoomUrl) {
-      this.client.say(target, "I'm not connected to an event.");
+      this.sayToRoom(target, "I'm not connected to an event.");
       return;
     }
 
     const followUrl = this.buildFollowUrl(currentRoomUrl);
     if (followUrl) {
-      this.client.say(target, `Follow along at: ${followUrl}`);
+      this.sayToRoom(target, `Follow along at: ${followUrl}`);
     } else {
-      this.client.say(target, "I'm connected, but couldn't build a follow link for this URL.");
+      this.sayToRoom(target, "I'm connected, but couldn't build a follow link for this URL.");
     }
   }
 
@@ -263,7 +273,7 @@ export class IRCBot {
       }
 
       if (!url) {
-        this.client.say(target, "No URL provided");
+        this.sayToRoom(target, 'No URL provided');
         return;
       }
 
@@ -271,18 +281,18 @@ export class IRCBot {
       const followUrl = this.buildFollowUrl(subscriptionResult.processedUrl);
 
       if (subscriptionResult.alreadySubscribed) {
-        this.client.say(target, 'Already subscribed in this room.');
+        this.sayToRoom(target, 'Already subscribed in this room.');
         return;
       }
 
       if (subscriptionResult.createdConnection) {
-        this.client.say(target, followUrl ? `Connected! Follow along at: ${followUrl}` : 'Connected!');
+        this.sayToRoom(target, followUrl ? `Connected! Follow along at: ${followUrl}` : 'Connected!');
       } else {
-        this.client.say(target, followUrl ? `Subscribed to existing connection. Follow along at: ${followUrl}` : 'Subscribed to existing connection.');
+        this.sayToRoom(target, followUrl ? `Subscribed to existing connection. Follow along at: ${followUrl}` : 'Subscribed to existing connection.');
       }
     } catch (error) {
       this.logger.error('Connect error:', error);
-      this.client.say(target, "I couldn't connect");
+      this.sayToRoom(target, "I couldn't connect");
     }
   }
 
@@ -301,7 +311,7 @@ export class IRCBot {
   private async handleDisconnect(target: string): Promise<void> {
     const roomUrls = this.roomSubscriptions.get(target);
     if (!roomUrls || roomUrls.size === 0) {
-      this.client.say(target, 'This room is not subscribed to any events.');
+      this.sayToRoom(target, 'This room is not subscribed to any events.');
       return;
     }
 
@@ -310,31 +320,31 @@ export class IRCBot {
       await this.unsubscribeRoomFromUrl(target, url);
     }
 
-    this.client.say(target, 'Disconnected this room from all subscribed events.');
+    this.sayToRoom(target, 'Disconnected this room from all subscribed events.');
   }
 
   private async handleReload(target: string): Promise<void> {
     reloadKarmaMessages();
     reloadSettings();
-    this.client.say(target, 'OK');
+    this.sayToRoom(target, 'OK');
   }
 
   private async handleSubscriptions(target: string): Promise<void> {
     if (this.splitKitConnections.size === 0) {
-      this.client.say(target, 'No active websocket connections.');
+      this.sayToRoom(target, 'No active websocket connections.');
       return;
     }
 
     const roomUrls = this.roomSubscriptions.get(target);
     if (!roomUrls || roomUrls.size === 0) {
-      this.client.say(target, 'This room is not subscribed to any events.');
+      this.sayToRoom(target, 'This room is not subscribed to any events.');
     } else {
-      this.client.say(target, `This room subscriptions: ${Array.from(roomUrls).join(' | ')}`);
+      this.sayToRoom(target, `This room subscriptions: ${Array.from(roomUrls).join(' | ')}`);
     }
 
-    this.client.say(target, `Active websocket connections: ${this.splitKitConnections.size}`);
+    this.sayToRoom(target, `Active websocket connections: ${this.splitKitConnections.size}`);
     for (const [url, subscribers] of this.urlSubscribers.entries()) {
-      this.client.say(target, `${url} <= ${Array.from(subscribers).join(', ')}`);
+      this.sayToRoom(target, `${url} <= ${Array.from(subscribers).join(', ')}`);
     }
   }
 
@@ -342,23 +352,152 @@ export class IRCBot {
     const { image, message } = this.messageState.getLastMessage();
     
     if (image) {
-      this.client.say(target, image);
+      this.sayToRoom(target, image);
     }
-    this.client.say(target, `Now Playing: ${message}`);
+    this.sayToRoom(target, `Now Playing: ${message}`);
   }
 
   private async handlePing(target: string, message: string): Promise<void> {
     const cmdLen = (this.config.COMMAND_PREFIX || '`').length + 'ping'.length;
     const suffix = message.slice(cmdLen); // Remove '<prefix>ping'
-    this.client.say(target, `pong${suffix}`);
+    this.sayToRoom(target, `pong${suffix}`);
   }
 
-  private async handleHelp(target: string): Promise<void> {
+  private async handleQuiet(target: string, message: string): Promise<void> {
     const p = this.config.COMMAND_PREFIX || '`';
-    this.client.say(target, `Commands: \x02${p}help\x02 (show commands), \x02${p}linkme\x02 (event link), \x02${p}np\x02 (now playing), \x02${p}ping\x02 (test response) | Admin: \x02${p}connect\x02 (join event), \x02${p}disconnect\x02 (leave event), \x02${p}subscriptions\x02 (show room/url subscriptions), \x02${p}join\x02 (join channel), \x02${p}part\x02 (leave channel), \x02${p}reset\x02 (reset bot), \x02${p}reload\x02 (reload config), \x02${p}quit\x02 (shutdown bot)`);
+    const topic = message.trim().split(/\s+/)[1]?.toLowerCase();
+    const state = this.getRoomQuietState(target);
+
+    if (!topic) {
+      state.all = true;
+      state.quips = true;
+      state.boostagrams = true;
+      this.sayToRoom(target, 'Quiet mode enabled for this room. Only help responses will be sent.', 'general', true);
+      return;
+    }
+
+    if (topic === 'quips') {
+      state.quips = true;
+      this.sayToRoom(target, 'Quiet quips enabled for this room.', 'general', true);
+      return;
+    }
+
+    if (topic === 'boostagrams') {
+      state.boostagrams = true;
+      this.sayToRoom(target, 'Boostagrams will not be shown in this room.', 'general', true);
+      return;
+    }
+
+    this.sayToRoom(target, `Usage: ${p}quiet [quips|boostagrams]`, 'general', true);
   }
 
-  async sendMessageToChannels(message: string): Promise<void> {
+  private async handleUnquiet(target: string, message: string): Promise<void> {
+    const p = this.config.COMMAND_PREFIX || '`';
+    const topic = message.trim().split(/\s+/)[1]?.toLowerCase();
+    const state = this.getRoomQuietState(target);
+
+    if (!topic) {
+      state.all = false;
+      state.quips = false;
+      state.boostagrams = false;
+      this.sayToRoom(target, 'Quiet mode disabled for this room. All bot messages are enabled.');
+      return;
+    }
+
+    if (topic === 'quips') {
+      state.quips = false;
+      this.sayToRoom(target, 'Quips re-enabled for this room.');
+      return;
+    }
+
+    if (topic === 'boostagrams') {
+      state.boostagrams = false;
+      this.sayToRoom(target, 'Boostagrams re-enabled for this room.');
+      return;
+    }
+
+    this.sayToRoom(target, `Usage: ${p}unquiet [quips|boostagrams]`);
+  }
+
+  private async handleHelp(target: string, message: string): Promise<void> {
+    const p = this.config.COMMAND_PREFIX || '`';
+    const lower = message.toLowerCase();
+    const helpPrefix = `${p.toLowerCase()}help`;
+    const suffix = lower.slice(helpPrefix.length).trim();
+
+    // Keep existing behavior exactly for plain help.
+    if (!suffix) {
+      this.sayToRoom(target, `Commands: \x02${p}help\x02 (show commands), \x02${p}linkme\x02 (event link), \x02${p}np\x02 (now playing), \x02${p}ping\x02 (test response) | Admin: \x02${p}connect\x02 (join event), \x02${p}disconnect\x02 (leave event), \x02${p}subs\x02 (show room/url subscriptions), \x02${p}status\x02 (debug status), \x02${p}join\x02 (join channel), \x02${p}part\x02 (leave channel), \x02${p}reset\x02 (reset bot), \x02${p}reload\x02 (reload config), \x02${p}quit\x02 (shutdown bot), \x02${p}quiet\x02 (mute bot outputs), \x02${p}unquiet\x02 (restore bot outputs)`, 'help', true);
+      return;
+    }
+
+    const topic = suffix.split(/\s+/)[0] || '';
+    const commandHelp: Record<string, string> = {
+      help: `${p}help [command]: Show command list, or detailed help for one command.`,
+      linkme: `${p}linkme: Show the follow-along URL for this room's active event.`,
+      np: `${p}np: Show the last now-playing message and image URL.`,
+      ping: `${p}ping [text]: Reply with pong and echo any extra text.`,
+      connect: `${p}connect [url]: Admin only. Subscribe this room to an event URL (or default URL).`,
+      disconnect: `${p}disconnect: Admin only. Unsubscribe this room from all event URLs.`,
+      subs: `${p}subs: Admin only. Show this room's subscriptions and active websocket connections.`,
+      status: `${p}status: Admin only. Dump bot debug status for this room.`,
+      join: `${p}join <#channel>: Admin only. Make the bot join a channel.`,
+      part: `${p}part: Admin only. Make the bot leave the current channel.`,
+      reset: `${p}reset: Admin only. Reset message state, leave non-#skr channels, and clear subscriptions.`,
+      reload: `${p}reload: Admin only. Reload karma messages and runtime settings from disk.`,
+      quit: `${p}quit [message]: Admin only. Save state, disconnect, and quit IRC.`,
+      quiet: `${p}quiet [quips|boostagrams]: Admin only. Room-specific mute. No arg mutes all messages except help.`,
+      unquiet: `${p}unquiet [quips|boostagrams]: Admin only. Room-specific unmute. No arg re-enables all bot messages.`
+    };
+
+    const helpText = commandHelp[topic];
+    if (helpText) {
+      this.sayToRoom(target, helpText, 'help', true);
+      return;
+    }
+
+    this.sayToRoom(target, `Unknown command: ${topic}. Try ${p}help for the full list.`, 'help', true);
+  }
+
+  private async handleStatus(target: string): Promise<void> {
+    const roomUrls = this.roomSubscriptions.get(target);
+    const roomUrlList = roomUrls && roomUrls.size > 0 ? Array.from(roomUrls) : [];
+    const quiet = this.getRoomQuietState(target);
+    const lastMessage = this.messageState.getLastMessage();
+    const fullState = this.messageState.getMessages();
+    const activeConnections = Array.from(this.urlSubscribers.entries()).map(([url, subscribers]) => {
+      return `${url} <= ${Array.from(subscribers).join(', ')}`;
+    });
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    const statusLines: string[] = [
+      'Status:',
+      `Room: ${target}`,
+      `IRC connected: ${this.isConnected ? 'yes' : 'no'}`,
+      `Configured channels: ${this.channels.length} (${this.channels.join(', ') || 'none'})`,
+      `Joined channels: ${this.joinedChannels.size} (${Array.from(this.joinedChannels).join(', ') || 'none'})`,
+      `Admins: ${this.admins.join(', ') || 'none'}`,
+      `Default URL: ${this.config.URL || 'none'}`,
+      `Queue length: ${this.messageQueue.length}`,
+      `Room subscriptions: ${roomUrlList.length > 0 ? roomUrlList.join(' | ') : 'none'}`,
+      `Active websocket connections: ${this.splitKitConnections.size}`,
+      `Room quiet: all=${quiet.all} quips=${quiet.quips} boostagrams=${quiet.boostagrams}`,
+      `Last now playing: ${lastMessage.message || 'nothing'}`,
+      `Last image: ${lastMessage.image || 'none'}`,
+      `Active GUID: ${fullState.activeGUID || 'none'}`,
+      `Last state timestamp: ${fullState.timestamp ?? 0} (age=${fullState.timestamp ? nowTs - fullState.timestamp : 'n/a'}s)`
+    ];
+
+    for (const line of activeConnections) {
+      statusLines.push(`WS: ${line}`);
+    }
+
+    for (const line of statusLines) {
+      this.sayToRoom(target, line);
+    }
+  }
+
+  async sendMessageToChannels(message: string, category: 'general' | 'boostagrams' = 'general'): Promise<void> {
     if (!this.isConnected) {
       // Queue message until IRC is connected
       this.messageQueue.push(message);
@@ -367,27 +506,27 @@ export class IRCBot {
     }
 
     try {
-      // Use tracked channels as fallback if user.channels is not available
-      let channelsToUse: string[] = [];
-      
-      if (this.client.user && this.client.user.channels) {
-        channelsToUse = Array.from(this.client.user.channels.keys());
-        this.logger.debug(`Using user.channels: ${channelsToUse.join(', ')}`);
-      } else {
-        channelsToUse = Array.from(this.joinedChannels);
-        this.logger.debug(`Using fallback joinedChannels: ${channelsToUse.join(', ')}`);
-      }
+      const primaryChannel = this.channels[0];
 
-      if (channelsToUse.length === 0) {
-        this.logger.warn('No channels available to send message to, re-queuing');
+      if (!primaryChannel) {
+        this.logger.warn('No primary channel configured in CHANNELS, re-queuing');
         this.messageQueue.push(message);
         return;
       }
 
-      for (const channel of channelsToUse) {
-        this.logger.debug(`Sending to ${channel}: ${message}`);
-        this.client.say(channel, message);
+      if (!this.joinedChannels.has(primaryChannel)) {
+        this.logger.warn(`Primary channel ${primaryChannel} is not joined, re-queuing`);
+        this.messageQueue.push(message);
+        return;
       }
+
+      if (this.isRoomSuppressed(primaryChannel, category)) {
+        this.logger.debug(`Suppressed ${category} message in ${primaryChannel} due to quiet settings`);
+        return;
+      }
+
+      this.logger.debug(`Sending to primary channel ${primaryChannel}: ${message}`);
+      this.client.say(primaryChannel, message);
     } catch (error) {
       this.logger.error('Error sending message to channels:', error);
       // Re-queue the message to try again later
@@ -406,9 +545,53 @@ export class IRCBot {
         continue;
       }
 
+      if (this.isRoomSuppressed(room, 'general')) {
+        continue;
+      }
+
       this.logger.debug(`Sending room-scoped message to ${room}: ${message}`);
       this.client.say(room, message);
     }
+  }
+
+  private getRoomQuietState(room: string): { all: boolean; quips: boolean; boostagrams: boolean } {
+    let state = this.roomQuietState.get(room);
+    if (!state) {
+      state = { all: false, quips: false, boostagrams: false };
+      this.roomQuietState.set(room, state);
+    }
+
+    return state;
+  }
+
+  private isRoomSuppressed(room: string, category: 'general' | 'quips' | 'boostagrams'): boolean {
+    const state = this.getRoomQuietState(room);
+    if (state.all) {
+      return true;
+    }
+
+    if (category === 'quips' && state.quips) {
+      return true;
+    }
+
+    if (category === 'boostagrams' && state.boostagrams) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private sayToRoom(
+    room: string,
+    message: string,
+    category: 'general' | 'quips' | 'boostagrams' | 'help' = 'general',
+    force: boolean = false
+  ): void {
+    if (!force && category !== 'help' && this.isRoomSuppressed(room, category)) {
+      return;
+    }
+
+    this.client.say(room, message);
   }
 
   private normalizeSplitKitUrl(url: string): string {
