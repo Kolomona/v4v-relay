@@ -1,7 +1,7 @@
 import { Client as IRCClient } from 'irc-framework';
 import winston from 'winston';
 import { Config } from './types';
-import { parseChannels, parseAdmins } from './config';
+import { normalizeChannelName, parseChannels, parseAdmins } from './config';
 import { MessageStateManager } from './messageState';
 import { SplitKitClient } from './splitkit';
 import { checkKarma, reloadKarmaMessages } from './karma';
@@ -108,7 +108,8 @@ export class IRCBot {
   }
 
   private async handleMessage(event: any): Promise<void> {
-    const { nick, target, message } = event;
+    const { nick, message } = event;
+    const target = this.normalizeRoom(event.target);
 
     const karmaResponse = checkKarma(message, { user: nick });
     if (karmaResponse) {
@@ -213,7 +214,7 @@ export class IRCBot {
   }
 
   private async handleJoin(sender: string, message: string): Promise<void> {
-    const channel = message.split(' ')[1];
+    const channel = normalizeChannelName(message.split(' ')[1] ?? '');
     if (!channel) return;
 
     try {
@@ -541,16 +542,17 @@ export class IRCBot {
     }
 
     for (const room of rooms) {
-      if (!this.joinedChannels.has(room)) {
+      const roomName = this.normalizeRoom(room);
+      if (!this.joinedChannels.has(roomName)) {
         continue;
       }
 
-      if (this.isRoomSuppressed(room, 'general')) {
+      if (this.isRoomSuppressed(roomName, 'general')) {
         continue;
       }
 
-      this.logger.debug(`Sending room-scoped message to ${room}: ${message}`);
-      this.client.say(room, message);
+      this.logger.debug(`Sending room-scoped message to ${roomName}: ${message}`);
+      this.client.say(roomName, message);
     }
   }
 
@@ -587,11 +589,20 @@ export class IRCBot {
     category: 'general' | 'quips' | 'boostagrams' | 'help' = 'general',
     force: boolean = false
   ): void {
-    if (!force && category !== 'help' && this.isRoomSuppressed(room, category)) {
+    const roomName = this.normalizeRoom(room);
+    if (!force && category !== 'help' && this.isRoomSuppressed(roomName, category)) {
       return;
     }
 
-    this.client.say(room, message);
+    this.client.say(roomName, message);
+  }
+
+  private normalizeRoom(room: string): string {
+    if (room.startsWith('#')) {
+      return normalizeChannelName(room);
+    }
+
+    return room;
   }
 
   private normalizeSplitKitUrl(url: string): string {

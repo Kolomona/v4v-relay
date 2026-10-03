@@ -37,8 +37,14 @@ export function loadConfig(): Config {
   };
 }
 
+export function normalizeChannelName(channel: string): string {
+  return channel.trim().toLowerCase();
+}
+
 export function parseChannels(channelsString: string): string[] {
-  const channels = channelsString.split(',').map(ch => ch.trim());
+  const channels = channelsString.split(',')
+    .map(ch => normalizeChannelName(ch))
+    .filter(ch => ch.length > 0);
   // Always include testing channel
   if (!channels.includes('#skr')) {
     channels.push('#skr');
